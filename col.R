@@ -253,9 +253,11 @@ ci_col <- rineq::ci(
   ineqvar    = Colombia$wealth,
   outcome    = Colombia$stunting,
   weights    = Colombia$weight,
-  type       = "CI",           # relative concentration index
-  method     = "linreg_delta",
-  df_correction = TRUE,        # use population variance (derived from sample)
+  type       = "CI",            # relative concentration index
+  method     = "linreg_delta",  # Linear reg, no LHS transformation,
+                                # SE take into account sampling variability
+                                # of the estimate of the mean
+  df_correction = TRUE,         # use population variance (derived from sample)
   robust_se  = FALSE
 )
 
@@ -276,22 +278,15 @@ Colombia_decomp     <- Colombia[, decomp_vars]
 Colombia_decomp     <- na.omit(Colombia_decomp)
 rownames(Colombia_decomp) <- NULL
 
-# Survey design on the complete-case subset.
-# 'household' is omitted from id= to avoid single-PSU-per-stratum errors
-# (confirmed below: every household belongs to exactly one cluster).
+# Survey design: single-stage cluster sampling with subregion stratification.
+# V002 (household) is a within-cluster sequential index, not a global ID
 Colombia_decomp_svy <- svydesign(
   id      = ~cluster,
   strata  = ~subregion,
   weights = ~weight,
   data    = Colombia_decomp,
-  nest    = TRUE    # cluster IDs are nested within strata
+  nest    = TRUE    # relabel cluster ids to enforce nesting within strata
 )
-
-# Verify that each household is contained in a single cluster
-Colombia %>%
-  group_by(household) %>%
-  summarise(n_clusters = n_distinct(cluster), .groups = "drop") %>%
-  filter(n_clusters > 1)   # should return 0 rows
 
 # Survey-weighted logistic GLM
 m_col <- svyglm(
@@ -301,12 +296,15 @@ m_col <- svyglm(
   family  = quasibinomial,   # logistic regression with robust SEs
   data    = Colombia_decomp
 )
+# Coefficient table
+summary(m_col)$coef
 
 # WDW decomposition: contribution of each covariate to the CI
 c_col <- rineq::contribution(
-  m_col,
-  Colombia_decomp$wealth,
-  correction = TRUE,
+  object = m_col,
+  ranker = Colombia_decomp$wealth,
+  correction = TRUE,  # global and partial confidence should be corrrected
+                      # for negative values using imputation
   type       = "CI",
   intercept  = "exclude"
 )
@@ -450,5 +448,4 @@ Colombia_test %>%
     .groups     = "drop"
   ) %>%
   arrange(leaf_id)
-
 

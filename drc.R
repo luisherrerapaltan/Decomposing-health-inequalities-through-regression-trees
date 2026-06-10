@@ -331,9 +331,8 @@ rm(list=setdiff(ls(), "DRCongo"))
 library(rineq)
 
 # Weighted fractional rank of wealth.
-# NOTE: na.omit() was already applied during data preparation (line ~327), so
-# DRCongo is already a complete-case dataset. The rank is therefore computed
-# on this final dataset; there is no further subsetting before the GLM below.
+# NOTE: na.omit() was already applied during data preparation, so DRCongo is
+# already a complete-case dataset. 
 DRCongo$R <- rineq::rank_wt(DRCongo$wealth, DRCongo$weight)
 
 # Concentration index for deadu5 (relative, i.e. standard CI)
@@ -342,7 +341,9 @@ ci_drc <- rineq::ci(
   outcome       = DRCongo$deadu5,
   weights       = DRCongo$weight,
   type          = "CI",           # relative concentration index
-  method        = "linreg_delta",
+  method        = "linreg_delta", # Linear reg, no LHS transformation,
+                                  # SE take into account sampling variability
+                                  # of the estimate of the mean
   df_correction = TRUE,           # use population variance (derived from sample)
   robust_se     = FALSE
 )
@@ -364,7 +365,7 @@ rownames(DRCongo_decomp) <- NULL
 # Survey design.
 # DRC DHS 2007 does not have a sub-region strata variable; PSU is used as the
 # primary cluster ID. Household is added as a second-stage ID.
-# No strata= argument is specified to avoid single-PSU-per-stratum errors.
+# No strata argument is specified to avoid single-PSU-per-stratum errors.
 DRCongo_decomp_svy <- svydesign(
   id      = ~PSU + household,
   weights = ~weight,
@@ -380,15 +381,16 @@ m_drc <- svyglm(
   data    = DRCongo_decomp
 )
 
-# Coefficient table (replicates Table 2 in https://jech.bmj.com/content/67/8/667)
+# Coefficient table (replicates Table 2 in published paper)
 summary(m_drc)$coef
 
 # WDW decomposition: contribution of each covariate to the CI
-# (replicates Table 3 in https://jech.bmj.com/content/67/8/667)
+# (replicates Table 3 in published paper)
 c_drc <- rineq::contribution(
-  m_drc,
-  DRCongo_decomp$wealth,
-  correction = TRUE,
+  object = m_drc,
+  ranker = DRCongo_decomp$wealth,
+  correction = TRUE,  # global and partial confidence should be corrrected
+                      # for negative values using imputation
   type       = "CI",
   intercept  = "exclude"
 )
@@ -427,7 +429,7 @@ DRCongo <- DRCongo %>%
 set.seed(42)
 train_idx <- sample(seq_len(nrow(DRCongo)),
                     size = floor(0.8 * nrow(DRCongo)))
-DRC_train <- DRCongo[ train_idx, ]   # FIX: was DRCongo_train (undefined)
+DRC_train <- DRCongo[ train_idx, ]
 DRC_test  <- DRCongo[-train_idx, ]
 
 
@@ -436,8 +438,7 @@ DRC_test  <- DRCongo[-train_idx, ]
 
 # Fit the CI-based tree on the training set
 tree_drc <- rpart_ci(
-  formula   = cbind(wealth, deadu5) ~ ed + rural + agemoth +
-    birth + mocc + reg,
+  formula   = cbind(wealth, deadu5) ~ ed + rural + agemoth + birth + mocc + reg,
   data      = DRC_train,
   weights   = DRC_train$weight
 )
