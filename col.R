@@ -6,7 +6,7 @@ library (skimr)
 
 #### Import Datasets ####
 
-setwd("C:/Users/Luis/Documents/UHasselt/Y2/S4/Master Thesis/Project")
+setwd("C:/Users/Luis/Documents/UHasselt/Y2/S4/Master Thesis/Decomposing health inequalities through regression trees")
 
 births <- read_sas("data/colombia/COBR41SD/COBR41FL.SAS7BDAT", NULL) %>%
     remove_empty("cols") 
