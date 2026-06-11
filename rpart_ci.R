@@ -1,10 +1,10 @@
 # =============================================================================
 # rpart_ci.R
-# Plugs a custom impurity measure - the weighted absolute Concentration Index |CI| —
-# into the rpart engine via its documented method interface. That interface
+# Plugs a custom impurity measure, the weighted absolute Concentration Index |CI|,
+# into the rpart engine via its documented method interface. This interface
 # requires exactly three functions (init, eval, split) which rpart calls 
-# at specific moments during tree-building. The file provides those three,
-# plus three user-facing utilities built on top of the fitted tree object.
+# at specific moments during tree-building. This file provides those three,
+# plus three utilities built on top of the fitted tree object.
 
 # rpart_ci.R
 # │
@@ -26,11 +26,11 @@
 #   Gini impurity (classification). Here we instead split nodes to minimise
 #   the weighted absolute concentration index (|CI|) across the two child
 #   nodes. A split is only accepted if it strictly reduces the total |CI|
-#   relative to the parent, i.e. if the two children together are MORE
+#   relative to the parent, i.e. if the two children together are more
 #   internally equal (in the socioeconomic sense) than the parent was.
 #
 # How the response object works:
-#   rpart's custom-method interface requires the response y to carry ALL
+#   rpart's custom-method interface requires the response 'y' to carry all
 #   information needed to compute the impurity measure at evaluation time.
 #   Because the CI is a joint function of a health outcome AND a wealth
 #   ranking, y must be a two-column matrix:
@@ -78,33 +78,27 @@ ci_node <- function(y, wt) {
   # distribution and cov_w is the weighted covariance.
   #
   # Why inline instead of rineq::ci()?
-  # rineq::ci() is a general-purpose function with S3 dispatch, argument
-  # validation, object construction, and tryCatch overhead. When ci_node() is
-  # called tens of thousands of times per tree fit (once per candidate cut
-  # point × 2 children), that overhead dominates. The inline version does
-  # exactly the same arithmetic in 5 vectorised operations with no allocation
-  # beyond the rank vector — roughly 20–50x faster per call.
-  #
-  # Weighted fractional rank of wealth (y[,1]):
-  #   Rank each obs by wealth; ties share the average rank.
-  #   R_i = (sum of weights of obs with lower wealth + 0.5 * weight of ties)
-  #         / total weight
-  # This matches rineq::rank_wt() which is what rineq::ci() uses internally.
-
-  # .Machine$double.eps acts as a numerical zero-threshold. The check says:
-  # "if the health outcome has no meaningful weighted variation in this node,
-  # the CI is undefined — return 0 and move on." It protects 
-  # from a division-by-near-zero that would otherwise corrupt the goodness scores
-  # of every split evaluated in that node.  
-  #
-  # What is machine epsilon?  
-  # It is the smallest difference from 1 that the hardware can distinguish.
-  # It is the fundamental unit of floating-point rounding error.
-
+  # rineq::ci() is a general-purpose function with overhead from S3 dispatch,
+  # argument validation, and error handling. When called tens of thousands of 
+  # times per tree fit (once per candidate cut point × 2 children), this overhead 
+  # becomes a bottleneck. The inline version performs the same arithmetic using 
+  # 5 vectorised operations with minimal memory allocation, making it substantially 
+  # more efficient.
+  
   h      <- y[, 2L]
   wealth <- y[, 1L]
 
   # Guard: constant health outcome → CI is 0 (avoids division by near-zero mean)
+  
+  # What is machine epsilon?  
+  # It is the smallest difference from 1 that the hardware can distinguish.
+  # It is the fundamental unit of floating-point rounding error.
+  
+  # .Machine$double.eps acts as a numerical zero-threshold. If the health outcome
+  # has no meaningful weighted variation in this node, the CI is undefined 
+  # — return 0 and move on. It protects from a division-by-near-zero that 
+  # would otherwise corrupt the goodness scores of every split evaluated in that node.  
+  
   mu_h <- sum(wt * h) / sum(wt)
   if (abs(mu_h) < .Machine$double.eps) return(0)
   wvar_h <- sum(wt * (h - mu_h)^2)
@@ -127,7 +121,7 @@ ci_node <- function(y, wt) {
   cov_wt <- sum(wt * (h - mu_h) * (R - sum(wt * R) / total_wt)) / total_wt
   ci_val  <- 2 * cov_wt / mu_h
 
-  # Clamp to [-1, 1] to guard against floating-point overshoot
+  # Guard: against floating-point overshoot -> Clamp to [-1, 1]
   max(-1, min(1, ci_val))
 }
 
@@ -137,8 +131,8 @@ ci_node <- function(y, wt) {
 #' Initialisation function (called once by rpart before tree building)
 #'
 #' Responsibilities:
-#'   • Validate the shape of y (must be a 2-column matrix).
-#'   • Return metadata that rpart needs:
+#'   - Validate the shape of y (must be a 2-column matrix).
+#'   - Return metadata that rpart needs:
 #'      numy: number of response columns to pass to eval and split (2)
 #'      numresp: number of values stored per node in $frame$yval2
 #'               2 (weighted mean of the health outcome + signed CI)
@@ -176,13 +170,11 @@ init_ci <- function(y, offset, parms, wt) {
         "  |  |CI| = ",    round(dev,      digits)
       )
     },
-    # ── text() is required by rpart.plot ──────────────────────────────────
     # rpart.plot calls $functions$text once with ALL nodes simultaneously,
     # passing yval as a MATRIX with one row per node and two columns:
     #   col 1 = weighted mean of health outcome
     #   col 2 = signed CI
     text = function(yval, dev, wt, ylevel, digits, n, use.n) {
-      # yval is a matrix: rows = nodes, col 1 = mean(health), col 2 = CI
       yval <- as.matrix(yval)
       paste0(
         "mean(health)=", round(yval[, 1L], 3L), "\n",
@@ -201,9 +193,6 @@ init_ci <- function(y, offset, parms, wt) {
 #' Computes the node's representative value (label) and its impurity (deviance).
 #'
 #'  label — length-2 vector c(wmean_health, ci_signed), stored in frame$yval2.
-#'  The first element is what rpart.plot displays as the node value; 
-#'  the second is available for post-hoc interpretation.
-#'  
 #'  deviance — |CI| × sum(wt), not bare |CI|.
 #'
 #' When deviance == 0 the node is "pure" in the inequality sense: the health
@@ -219,8 +208,6 @@ eval_ci <- function(y, wt, parms) {
   wmean_health <- stats::weighted.mean(y[, 2L], wt)
   ci_signed    <- ci_node(y, wt)
 
-  # deviance = |CI| * sum(wt)
-  #
   # rpart's cp criterion is: improvement / root_deviance, where
   # improvement = parent_deviance - (left_deviance + right_deviance).
   # For cp to be positive (i.e. for rpart to accept the split), 
@@ -229,8 +216,7 @@ eval_ci <- function(y, wt, parms) {
   # With raw |CI| as deviance this fails: |CI_L| + |CI_R| can exceed |CI_parent|
   # even when the weighted average p_L·|CI_L| + p_R·|CI_R| is smaller, because
   # the two child CIs live on different weight bases. Multiplying by sum(wt) 
-  # makes deviance additive in the same way as rpart's built-in anova deviance
-  # (sum of squared residuals):
+  # makes deviance additive and can account for both inequality and node size.
   #
   #   parent_dev − (left_dev + right_dev)
   #   = |CI_P|·wt − (|CI_L|·wt_L + |CI_R|·wt_R)
@@ -249,7 +235,7 @@ eval_ci <- function(y, wt, parms) {
 #' rpart has already sorted observations by x before calling this.
 #'
 #' For each possible binary split of the node on the current variable x,
-#' compute the reduction in weighted |CI|:
+#' the reduction in weighted |CI| is computed:
 #'
 #'   goodness[i] = wt * (|CI_P| − p_L * |CI_L| - p_R * |CI_R|)
 #'
@@ -257,10 +243,10 @@ eval_ci <- function(y, wt, parms) {
 #' goodness = 0  means the split offers no improvement (rpart will ignore it).
 #'
 #' The function handles:
-#'   • Continuous x: iterate ONLY over cut points at x-value transitions
-#'     (i.e. where diff(x) != 0). See [Fix 2] below.
-#'   • Categorical x: iterate over all ordered binary partitions of K levels.
-#'     (rpart passes categorical x already as integer-encoded level codes.)
+#'   - Continuous x: iterate ONLY over cut points at x-value transitions
+#'     (i.e. where diff(x) != 0).
+#'   - Categorical x: iterate over all ordered binary partitions of K levels.
+#'     (rpart passes categorical x already as integer-encoded level codes)
 #'
 #' @param y          Two-column matrix for observations in this node
 #' @param wt         Weight vector
@@ -288,21 +274,18 @@ split_ci <- function(y, wt, x, parms, continuous) {
     cut_positions <- which(diff(x) != 0L)
 
     # ── Early-exit optimisation ───────────────────────────────────────────────
-    # For a continuous predictor with many unique values (e.g. mother_age,
-    # wealth) the number of candidate cut points can approach n. Most of them
+    # For a continuous predictor with many unique values (e.g. mother_age)
+    # the number of candidate cut points can approach n. Most of them
     # will not beat the best split found so far. Once the best_goodness has
     # stabilised (no improvement in the last `patience` consecutive cut points
     # that are at least `min_skip` positions apart), we stop evaluating.
     #
     # This is safe because:
-    #   (a) rpart only uses the cut point with the highest goodness score.
-    #   (b) We still return a full-length vector — unevaluated slots stay 0.
-    #   (c) The patience window is conservative (50 transitions) so genuine
-    #       improvements near the tail are not missed.
-    #
-    # Typical savings: a continuous predictor with 3000 unique cut points at
-    # the root node goes from 6000 ci_node() calls to ~200–400 calls once
-    # the best region has been found, a 10–30x reduction for that variable.
+    #   - rpart only uses the cut point with the highest goodness score.
+    #   - A full-length vector is still returned — unevaluated slots stay 0.
+    #   - The patience window is conservative (50 transitions) so genuine
+    #     improvements near the tail are not missed.
+    
     best_goodness   <- 0
     no_improve_cnt  <- 0L
     patience        <- 50L   # consecutive non-improving transitions before stopping
@@ -311,7 +294,8 @@ split_ci <- function(y, wt, x, parms, continuous) {
 
       left  <- seq_len(i)
       right <- seq.int(i + 1L, n)
-
+      
+      # Respect minsplit's spirit: skip if either child is too small. 
       if (length(left) < 5L || length(right) < 5L) next
 
       wt_l <- wt[left];  wt_r <- wt[right]
@@ -349,7 +333,7 @@ split_ci <- function(y, wt, x, parms, continuous) {
     
     # This imposes a linear order on an unordered categorical variable so that
     # the ncat − 1 binary partitions can be evaluated sequentially (levels with
-    # low mean health go left, high go right). It is the standard CART heuristic
+    # low mean health go left, high go right). It is standard CART heuristic
     # for nominal predictors. The key subtlety is that unique_codes here are
     # rpart's integer level codes (1-based), not the original factor labels —
     # so the ordered vector must be returned as direction directly.
@@ -433,7 +417,7 @@ split_ci <- function(y, wt, x, parms, continuous) {
 #' }
 #'
 #' @section Formula:
-#' The left-hand side MUST be \code{cbind(wealth_var, health_var)}:
+#' The left-hand side must be \code{cbind(wealth_var, health_var)}:
 #' \preformatted{
 #'   rpart_ci(cbind(wealth, stunting) ~ education + rural + mother_age,
 #'            data    = df,
@@ -442,7 +426,7 @@ split_ci <- function(y, wt, x, parms, continuous) {
 #' \describe{
 #'   \item{wealth_var}{Continuous socioeconomic ranking variable (e.g. wealth
 #'     score or asset index). Does NOT need to be pre-ranked; ci_node() handles
-#'     ranking internally via rineq::ci().}
+#'     ranking internally.}
 #'   \item{health_var}{Health outcome. Binary (0/1) is the primary use case
 #'     (e.g. stunting), but continuous outcomes are also supported.}
 #' }
@@ -455,7 +439,7 @@ split_ci <- function(y, wt, x, parms, continuous) {
 #'   \item \code{frame$dev}    — |CI| for each node (the impurity).
 #'   \item \code{frame$yval2}  — two-column matrix: [mean(health), signed CI].
 #'         The signed CI tells you the direction of inequality in each leaf:
-#'         negative = pro-poor (poor children more affected),
+#'         negative = pro-poor,
 #'         positive = pro-rich.
 #' }
 #'
@@ -525,8 +509,6 @@ rpart_ci <- function(formula,
   # ── Dependency check ────────────────────────────────────────────────────────
   if (!requireNamespace("rpart",  quietly = TRUE))
     stop("Package 'rpart' is required. Install with: install.packages('rpart')")
-  if (!requireNamespace("rineq",  quietly = TRUE))
-    stop("Package 'rineq' is required. Install from GitHub or CRAN.")
 
   # ── Warn if any RHS predictor is logical or bare 0/1 numeric ────────────────
   # These will be treated as continuous by rpart, triggering the row-by-row
@@ -571,7 +553,9 @@ rpart_ci <- function(formula,
       cp        = cp,
       minsplit  = minsplit,
       minbucket = minbucket,
-      xval         = 0L,
+      # Cross-validation disabled: predict.rpart() doesn't support custom
+      # methods. Validate externally using ci_by_leaf() on held-out data.
+      xval         = 0L, 
       # maxcompete = 0, maxsurrogate = 0: suppress extra split rows.
       # Competitor rows (count=0) and surrogate rows break the sequential
       # walk in .assign_leaves by adding unexpected rows between nodes.
@@ -602,7 +586,7 @@ rpart_ci <- function(formula,
 #   Categorical variable → K rows: first has |ncat|=K; rest have ncat=0
 # Rows appear in the same order as internal nodes in tree$frame.
 #
-# ncat sign for continuous splits (rpart user-split vignette, Therneau 2023):
+# ncat sign for continuous splits (rpart user-split vignette):
 #   ncat = +1 : x < cutpoint  → RIGHT child (2*nid+1)
 #   ncat = -1 : x >= cutpoint → RIGHT child (2*nid+1)
 #
@@ -711,10 +695,10 @@ rpart_ci <- function(formula,
 #' on a (possibly held-out) dataset.
 #'
 #' Useful for:
-#'   • Verifying that the tree has indeed found leaves with lower |CI| than
+#'   - Verifying that the tree has indeed found leaves with lower |CI| than
 #'     the root (sanity check).
-#'   • Interpreting the direction and magnitude of inequality within each leaf.
-#'   • Evaluating the tree on a test set not used during fitting.
+#'   - Interpreting the direction and magnitude of inequality within each leaf.
+#'   - Evaluating the tree on a test set not used during fitting.
 #'
 #' @param tree        A fitted rpart object (output of \code{rpart_ci}).
 #' @param data        Data frame on which to evaluate (train or test).
@@ -748,7 +732,7 @@ ci_by_leaf <- function(tree,
   leaf_nodes <- as.integer(rownames(tree$frame)[leaf_mask])
   # Keep only leaves that actually received observations (n > 0 in $frame).
   # After pruning, ghost leaves with n=0 linger in $frame but get no
-  # observations from .assign_leaves, so they drop out here automatically.
+  # observations from .assign_leaves, so they drop out automatically.
   leaf_nodes <- leaf_nodes[tree$frame$n[leaf_mask] > 0L]
   wt         <- if (!is.null(weight_var)) data[[weight_var]] else rep(1, nrow(data))
 
@@ -799,14 +783,14 @@ ci_by_leaf <- function(tree,
 #'
 #' # Inspect the suspicious leaf
 #' Colombia_train %>%
-#'   filter(leaf_id == 2) %>%          # replace 2 with the actual node ID
+#'   filter(leaf_id == 2) %>%
 #'   count(stunting)
 #'
 #' Colombia_train %>%
 #'   group_by(leaf_id) %>%
-#'   summarise(n          = n(),
-#'             pct_stunted = mean(stunting),
-#'             n_stunted   = sum(stunting))
+#'   summarise(n            = n(),
+#'             pct_stunted  = mean(stunting),
+#'             n_stunted    = sum(stunting))
 #' }
 #'
 #' @export
@@ -830,15 +814,12 @@ add_leaf_col <- function(tree, data, col_name = "leaf_id") {
 #' attaches the Kakwani, Wagstaff & van Doorslaer (1997) asymptotic standard
 #' error and confidence interval.
 #'
-#' Self-contained implementation — no dependency on rineq — so every step
-#' traces directly to the published formula and can be reproduced in a thesis.
-#'
 #' The CI:
 #'   C_hat = (2 / mu) * Cov_w(h, r)
 #' where r_i is the weighted fractional rank of observation i in the wealth
 #' distribution, and Cov_w is the weighted covariance.
 #'
-#' Variance via the delta method (Kakwani, Wagstaff & van Doorslaer 1997, eq. 14):
+#' Variance via the delta method:
 #'   Var(C_hat) = (1/n) * [ (1/n) * sum(a_i^2) - (1 + C_hat)^2 ]
 #' where:
 #'   a_i = (h_i / mu) * (2*r_i - 1 - C_hat) + 2 - q_{i-1} - q_i
@@ -854,14 +835,14 @@ add_leaf_col <- function(tree, data, col_name = "leaf_id") {
 #' @param weight_var  Character or NULL; name of the survey weight column.
 #'                    If NULL, uniform weights are used (unweighted case).
 #' @param z           Numeric; z-value for the confidence interval width.
-#'                    Default 1.96 for 95% CI. Use 2.576 for 99%.
+#'                    Default 1.96 for 95% CI.
 #'
 #' @return A data frame with one row per leaf:
 #'   \item{leaf_id}{Integer node ID from the rpart frame.}
 #'   \item{n}{Number of observations in this leaf.}
 #'   \item{mean_health}{Weighted mean of the health outcome.}
 #'   \item{ci_signed}{Signed CI estimate.}
-#'   \item{ci_se}{Standard error of the CI (Kakwani et al. 1997).}
+#'   \item{ci_se}{Standard error of the CI.}
 #'   \item{ci_lower}{Lower bound of the confidence interval.}
 #'   \item{ci_upper}{Upper bound of the confidence interval.}
 #'
