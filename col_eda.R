@@ -192,7 +192,7 @@ ggsave("eda_04_wealth_by_covariate.pdf", p4, width = 14, height = 10)
 interaction_df <- Colombia_decomp %>%
     mutate(
         wealth_decile = ntile(wealth, 10),
-        rural_label   = ifelse(rural, "Rural", "Urban"),
+        rural_label   = ifelse(rural==TRUE, "Rural", "Urban"),
         ed_label      = ifelse(ed == "a education", "Mother educated", "Mother not educated")
     )
 
@@ -292,7 +292,7 @@ p7 <- ggplot(cc_df, aes(x = cum_pop, y = cum_stunting)) +
     geom_line(color = "#c0392b", linewidth = 1.1) +
     geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
     annotate("text", x = 0.35, y = 0.55,
-             label = paste0("CI = ", round(ci_colombia$concentration_index, 3)),
+             label = paste0("CI = ", round(ci_col$concentration_index, 3)),
              size = 4.5, color = "#c0392b", fontface = "bold") +
     scale_x_continuous(labels = percent_format(accuracy = 1)) +
     scale_y_continuous(labels = percent_format(accuracy = 1)) +
@@ -367,3 +367,4 @@ cat("  eda_06_regional.pdf\n")
 cat("  eda_07_concentration_curve.pdf\n")
 cat("  eda_08_wdw_decomposition.pdf\n")
 cat("  eda_panel_thesis.pdf\n")
+
