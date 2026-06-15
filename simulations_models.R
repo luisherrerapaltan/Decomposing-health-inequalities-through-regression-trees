@@ -107,64 +107,38 @@ run_tree_ci <- function(data, outcome_var, covariates,
 
 
 # ── extract_ci_explained() ────────────────────────────────────────────────────
-# Computes three summary statistics for the cross-scenario table:
+# Computes the observed concentration index for the cross-scenario table:
 #
 #   total_CI
 #     The observed concentration index of the health outcome against the wealth
-#     ranking, taken directly from the rineq contribution object ($CI slot).
+#     ranking, computed directly via rineq::ci(ineqvar = wealth, outcome = h,
+#     weights = weight) on the raw outcome.
 #
-#   WDW_model_CI
-#     The CI reproduced by the WDW model's fitted values ($corrected_CI slot).
-#     rineq recomputes the CI using the fitted linear predictor rather than the
-#     raw outcome. This is what the WDW model "thinks" the CI is.
-#     Note: rineq calls this "corrected" because it applies a boundary
-#     correction to the binary outcome; it is not a correction for model
-#     misspecification.
 #
-#   WDW_explained_pct
-#     WDW_model_CI / total_CI × 100. Measures how much of the observed
-#     socioeconomic inequality the WDW model reproduces from its fitted values:
-#       ~100% → model correctly captures the CI (Scenario A expected)
-#       <100%  → model underestimates inequality (misspecification, B and C)
-#       >100%  → model overestimates (can occur with interactions)
-#     The rineq residual row is ALWAYS 0% by algebraic construction 
-#     (the decomposition sums to exactly 100% by design), so it carries
-#     no information about fit.
+# ARGS
+#   data         Data frame containing the raw outcome, wealth, and weight
+#                 columns (e.g. wdw_X$data).
+#   outcome_var  Character; name of the binary health outcome column.
+#   wealth_var   Character; name of the wealth ranking column. Default "wealth".
+#   weight_var   Character; name of the survey weight column. Default "weight".
 #
-# RETURNS  data frame: total_CI | WDW_model_CI | WDW_explained_pct
-extract_ci_explained <- function(contribution_obj) {
+# RETURNS  data frame: total_CI
+extract_ci_explained <- function(data, outcome_var,
+                                  wealth_var = "wealth", weight_var = "weight") {
 
-    # Parse both CI values from the printed summary output.
-    # rineq::summary.rineq() always prints exactly two "Overall CI:" lines:
-    #   Line 1: the observed CI of the raw outcome (unconditional)
-    #   Line 2: the CI recomputed from model fitted values ("corrected"),
-    #           followed by "(based on a corrected value)"
-    # We extract the numeric value from each line with a simple regex.
-    # This approach is version-agnostic and avoids relying on internal slot
-    # names ($CI, $corrected_CI) which may vary across rineq releases.
-
-    s_text    <- capture.output(summary(contribution_obj))
-    ci_lines  <- grep("^Overall CI:", s_text, value = TRUE)
-
-    # Extract the first number on each matching line
-    extract_num <- function(line) {
-        m <- regmatches(line, regexpr("-?[0-9]+\\.?[0-9]*", line))
-        if (length(m) == 1L) as.numeric(m) else NA_real_
-    }
-
-    obs_ci   <- if (length(ci_lines) >= 1L) extract_num(ci_lines[1]) else NA_real_
-    model_ci <- if (length(ci_lines) >= 2L) extract_num(ci_lines[2]) else obs_ci
-
-    explained_pct <- if (!is.na(obs_ci) && abs(obs_ci) > 1e-10) {
-        round(100 * model_ci / obs_ci, 1)
-    } else NA_real_
+    # total_CI: raw bivariate CI, computed directly and independently of any
+    # decomposition-internal sign correction.
+    obs_ci <- rineq::ci(
+        ineqvar = data[[wealth_var]],
+        outcome = data[[outcome_var]],
+        weights = data[[weight_var]]
+    )$concentration_index
 
     data.frame(
-        total_CI          = round(obs_ci,        4),
-        WDW_model_CI      = round(model_ci,      4),
-        WDW_explained_pct = explained_pct
+        total_CI = round(obs_ci, 4)
     )
 }
+
 
 
 # ── mean_abs_leaf_ci() ────────────────────────────────────────────────────────
@@ -552,15 +526,15 @@ cat("\n========== CROSS-SCENARIO SUMMARY TABLE ==========\n")
 
 summary_table <- bind_rows(
     cbind(scenario = "A — Additive",
-          extract_ci_explained(wdw_A$contribution),
+          extract_ci_explained(data = wdw_A$data, outcome_var = "stunting_A"),
           CItree_mean_abs_leaf_CI = round(mean_abs_leaf_ci(leaf_ci_A), 4)),
 
     cbind(scenario = "B — Interactions",
-          extract_ci_explained(wdw_B$contribution),
+          extract_ci_explained(data = wdw_B$data, outcome_var = "stunting_B"),
           CItree_mean_abs_leaf_CI = round(mean_abs_leaf_ci(leaf_ci_B), 4)),
 
     cbind(scenario = "C — Segmentation",
-          extract_ci_explained(wdw_C$contribution),
+          extract_ci_explained(data = wdw_C$data, outcome_var = "stunting_C"),
           CItree_mean_abs_leaf_CI = round(mean_abs_leaf_ci(leaf_ci_C), 4))
 )
 
@@ -571,29 +545,17 @@ print(summary_table)
 # INTERPRETATION GUIDE
 #
 # total_CI
-#   The observed concentration index. Negative = pro-poor inequality (ill-health
-#   concentrated among the poor), positive = pro-rich. Scenarios B and C should
-#   show a more negative CI than Scenario A because the DGPs add extra risk for
-#   the poor.
-#
-# WDW_model_CI
-#   CI reproduced by the WDW model's fitted values. If WDW_model_CI ≈ total_CI
-#   the linear model correctly captures the inequality structure. If
-#   WDW_model_CI << |total_CI|, the model is missing important non-linearity.
-#
-# WDW_explained_pct  (= WDW_model_CI / total_CI × 100)
-#   ~100% → WDW correctly specified, reproduces nearly all observed inequality.
-#   <100% → WDW underestimates inequality (interactions or segmentation missed).
-#   Expected: ~100% for Scenario A, noticeably below 100% for B and C.
+#   The raw observed concentration index, computed directly via rineq::ci() on
+#   the outcome, wealth, and weight columns (independent of any decomposition-
+#   internal sign correction). Negative = pro-poor inequality (ill-health
+#   concentrated among the poor), positive = pro-rich.
 #
 # CItree_mean_abs_leaf_CI  (evaluated on the TEST set)
-#   Leaf-size-weighted mean of |CI| across all terminal nodes. Lower = tree
-#   has found subgroups where within-group SES-health inequality is reduced.
-#   Scenario A: no real structure → value stays near the root |CI|.
-#   Scenario B: interaction subgroups detected → value below root |CI|.
-#   Scenario C: segmentation partially recovered → value below root |CI|.
-#   The gap between |total_CI| and CItree_mean_abs_leaf_CI quantifies how much
-#   inequality heterogeneity the tree has explained.
+#   Leaf-size-weighted mean of |CI| across all terminal nodes. This statistic
+#   uses LOCAL within-leaf wealth ranks and is evaluated on the test set, while
+#   total_CI uses GLOBAL wealth ranks on the training set; the two are not
+#   directly comparable as a before/after pair. CItree_mean_abs_leaf_CI is informative in its own right as a
+#   measure of residual within-leaf inequality.
 #
 # cp justification (tuning_C)
 #   Mean ± SD of test-set mean leaf |CI| across 50 replicates per cp value.
