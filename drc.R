@@ -7,8 +7,6 @@ library(tableone)
 # remove(list=ls())	# remove any existing list or vector
 library(foreign)	# necessary to import the Stata file
 
-setwd("C:/Users/Luis/Documents/UHasselt/Y2/S4/Master Thesis/Decomposing health inequalities through regression trees")
-
 all <- readRDS("data/drc/RDC_DHS_2007.rds")
 
 # to have children <5 only (same as taking the file "Children's Recode") 
