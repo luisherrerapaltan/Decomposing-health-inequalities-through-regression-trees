@@ -283,9 +283,9 @@ plot_cp_tuning <- function(tuning_df, scenario_label = "") {
         labs(
             title    = paste0("cp tuning — CI tree",
                               if (nchar(scenario_label)) paste0(" (", scenario_label, ")")),
-            subtitle = "Mean ± 1 SD of weighted mean |CI| per leaf (test set, 50 replicates)",
+            subtitle = "Test set, 50 replicates",
             x        = "cp  (log scale)",
-            y        = "Mean |CI| per leaf (lower = better)"
+            y        = "Mean |CI| per leaf"
         ) +
         theme_minimal(base_size = 13)
 }
