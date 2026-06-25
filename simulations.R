@@ -57,7 +57,7 @@ mother_age <- rnorm(n, 25, 6)
 
 # ── Survey weights ────────────────────────────────────────────────────────────
 # Uniform here; real DHS weights are near 1 after normalisation.
-weight <- runif(n, 0.5, 2)
+weight <- runif(n, min = 0.5, max = 2)
 weight <- weight / mean(weight)
 
 # ── Pre-computed wealth rank ───────────────────────────────────────────────────
